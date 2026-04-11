@@ -165,6 +165,7 @@ The type system is not an afterthought. Even Stage 1 foundations are built with 
 
 ### String as a Builtin
 No more string.h or string manipulation pain. Strings are first-class with arena-backed fat pointers and automatic semantics (`string` vs `string&`).
+Note: Working on better arena implementation and also optimised arena implementation and lastly arena with garbage collection and individual free 
 
 ### Zero Unsafe Code (Eventually)
 Stages 7-8 add bounds checking and pointer safety. The language is designed to make unsafe operations explicit and rare.
