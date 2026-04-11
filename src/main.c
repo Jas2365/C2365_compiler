@@ -88,6 +88,21 @@ i32 main(i32 argc, i8** argv) {
     // fn add(i32 a, i32! b) -> i32 { return a + b; }
 
     
+    // module math;
+    Ast_Node *mod  = Ast_Arena_Node(&arena, NODE_MODULE, 1);
+    mod->node_module.name = sv_lit("math");
+
+    // param i32 a  (const by default)
+    Ast_Type* i32_type_a = Ast_Arena_Type(&arena, TYPE_I32, 3);
+    Ast_Param param_a = {
+        .name = sv_lit("a"),
+        .type_node = i32_type_a,
+        .is_mutable = false,
+        .line = 3,
+    };
+
+    // param i32! b (mutable - compiler passess by pointer in IR)
+    Ast_Type* i32_type_b = Ast_Arena_Type(&arena, TYPE_I32, 3);
 
 
 
