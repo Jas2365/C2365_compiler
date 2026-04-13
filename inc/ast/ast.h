@@ -231,8 +231,8 @@ typedef enum Binary_Op {
     BINOP_BIT_AND,
     BINOP_BIT_OR,
     BINOP_BIT_XOR,
-    BINOP_BIT_LSHIFT,
-    BINOP_BIT_RSHIFT,
+    BINOP_LSHIFT,
+    BINOP_RSHIFT,
 
 } Binary_Op;
 
