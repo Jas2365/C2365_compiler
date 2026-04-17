@@ -33,7 +33,7 @@ endif
 
 dirs := $(sort $(dir $(objs)))
 
-target = out/Comiler.exe
+target = out/Compiler.exe
 
 all: clean build run
 

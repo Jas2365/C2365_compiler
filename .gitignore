@@ -2,3 +2,5 @@
 out
 # build
 build
+# exe
+*.exe

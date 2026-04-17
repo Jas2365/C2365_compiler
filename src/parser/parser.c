@@ -645,7 +645,7 @@ static Ast_Node* parse_primary(Parser* p) {
         for(i32 i = 0; i < len; i++) buf[i] = t->text.data[i];
         buf[len] = '\0';
         Ast_Node* n = Ast_Arena_Node(p->arena, NODE_LIT_INT, line);
-        n->node_lit_int.value = (i64)stroll(buf, nullptr, 10);
+        n->node_lit_int.value = (i64)strtoll(buf, nullptr, 10);
         return n;
     }
 
@@ -1003,9 +1003,254 @@ static Ast_Node* parse_while(Parser* p) {
     return node;
 }
 
+static Ast_Node* parse_for(Parser* p) {
+    i32 line = cur(p)->line;
+    expect(p, TOKEN_FOR, "'for'");
+    expect(p, TOKEN_LPAREN, "'('");
 
+    // init
+    Ast_Node* init = nullptr;
+    if(!at(p, TOKEN_SEMICOLON)) {
+        if(is_type_start(p))
+            init= parse_var_decl(p, false);
+        else {
+            init = Ast_Arena_Node(p->arena, NODE_EXPR_STMT, line);
+            init->node_expr_stmt.expr = parse_expr(p);
+            expect(p, TOKEN_SEMICOLON, "';'");
+        }
+    } else advance(p);
 
+    // cond
+    Ast_Node* cond = nullptr;
+    if(!at(p, TOKEN_SEMICOLON))
+        cond = parse_expr(p);
+    expect(p, TOKEN_SEMICOLON, "';'");
 
+    // step 
+    Ast_Node* step = nullptr;
+    if(!at(p, TOKEN_RPAREN)) {
+        step = Ast_Arena_Node(p->arena, NODE_EXPR_STMT, line);
+        step->node_expr_stmt.expr = parse_expr(p);
+    }
+    expect(p, TOKEN_RPAREN, "')'");
+    Ast_Node* body = parse_block(p);
+    
+    Ast_Node* node = Ast_Arena_Node(p->arena, NODE_FOR, line);
+    node->node_for.init = init;
+    node->node_for.cond = cond;
+    node->node_for.step = step;
+    node->node_for.body = body;
+    return node;
+}
 
+static Ast_Node* parse_switch(Parser* p) {
+    i32 line = cur(p)->line;
+    expect(p, TOKEN_SWITCH, "'switch'");
+    expect(p, TOKEN_LPAREN, "'('");
+    Ast_Node* expr = parse_expr(p);
+    expect(p, TOKEN_RPAREN, "')'");
+    expect(p, TOKEN_LBRACE, "'{'");
+
+    Ast_Case cases_buf[128];
+    i32      case_count = 0;
+
+    // should make case a keyword or just have identifier or literals be the cases themselves
+
+    while(!at(p, TOKEN_RBRACE) && !at(p, TOKEN_EOF)) {
+        if(at(p, TOKEN_IDENT) && sv_eq_lit(cur(p)->text, "case", 4)) {
+            advance(p);
+            Ast_Node* val = parse_expr(p);
+            expect(p, TOKEN_COLON, "':'");
+            Ast_Node* body = parse_block(p);
+            cases_buf[case_count++] = (Ast_Case){
+                .value = val,
+                .body = body
+            };
+        } else if (at(p, TOKEN_IDENT) && sv_eq_lit(cur(p)->text, "default", 7)) {
+            advance(p);
+            expect(p, TOKEN_COLON, "':'");
+            Ast_Node* body = parse_block(p);
+            cases_buf[case_count++] = (Ast_Case) {
+                .value = nullptr, 
+                .body = body
+            };
+        } else {
+            fprintf(stderr, "[line %d] error: expected 'case' or 'default' \n",
+                cur(p)->line
+            );
+            p->errors++;
+            advance(p);
+        }
+    }
+
+    expect(p, TOKEN_RBRACE, "'}'");
+    Ast_Node* node = Ast_Arena_Node(p->arena, NODE_SWITCH, line);
+    node->node_switch.expr = expr;
+    node->node_switch.case_count = case_count;
+    if(case_count > 0) {
+        node->node_switch.cases = (Ast_Case*)Ast_Arena_Array(
+            p->arena, (i64)sizeof(Ast_Case), case_count
+        );
+        for(i32 i = 0; i<case_count; i++)
+            node->node_switch.cases[i] = cases_buf[i];
+    }
+    return node;
+
+}
+
+static Ast_Node* parse_stmt(Parser* p) {
+    i32 line = cur(p)->line;
+
+    if(at(p, TOKEN_RETURN)) {
+        advance(p);
+        Ast_Node* node = Ast_Arena_Node(p->arena, NODE_RETURN, line);
+        node->node_return.value = nullptr;
+
+        if(!at(p, TOKEN_SEMICOLON)) {
+            node->node_return.value = parse_expr(p);
+        }
+        expect(p, TOKEN_SEMICOLON, "';'");
+        return node;
+    }
+
+    if(at(p, TOKEN_IF))         return parse_if(p);
+    if(at(p, TOKEN_WHILE))      return parse_while(p);
+    if(at(p, TOKEN_FOR))        return parse_for(p);
+    if(at(p, TOKEN_SWITCH))     return parse_switch(p);
+    if(at(p, TOKEN_LBRACE))     return parse_block(p);
+
+    if(at(p, TOKEN_BREAK)) {
+        advance(p);
+        expect(p, TOKEN_SEMICOLON, "';'");
+        return Ast_Arena_Node(p->arena, NODE_BREAK, line);
+    }
+
+    if(at(p, TOKEN_CONTINUE)) {
+        advance(p);
+        expect(p, TOKEN_SEMICOLON, "';'");
+        return Ast_Arena_Node(p->arena, NODE_CONTINUE, line);
+    }
+
+    if(at(p, TOKEN_PERSIST)) return parse_persist_decl(p);
+    if(at(p, TOKEN_CONST)) { advance(p); return parse_var_decl(p, true); }
+
+    // var decl: starts with a type keyword or known type ident followed by ident
+    if(is_type_start(p)) {
+        // disambiguate var decl from expression starting with a type cast 
+        // if: type_kw ident = var decl
+        // if: type_kw '(' = cast expr
+        b8 is_decl = false;
+        if(cur(p)->kind != TOKEN_IDENT) {
+            // primitive
+            is_decl = peek_at(p, 1)->kind == TOKEN_IDENT ||
+                      peek_at(p, 1)->kind == TOKEN_AMP; // string& x
+        } else {
+            // named type: vec3 x 
+            is_decl = peek_at(p,1)->kind == TOKEN_IDENT ||
+                     ( peek_at(p,1)->kind == TOKEN_STAR &&
+                       peek_at(p,2)->kind == TOKEN_IDENT);
+        }
+        if(is_decl) return parse_var_decl(p, false);
+    }
+
+    // expr stmt
+    Ast_Node* node = Ast_Arena_Node(p->arena, NODE_EXPR_STMT, line);
+    node->node_expr_stmt.expr = parse_expr(p);
+    expect(p, TOKEN_SEMICOLON, "';'");
+    return node;
+
+}
+
+// top level
+
+static Ast_Node* parse_top_decl(Parser* p) {
+    i32 line = cur(p)->line;
+
+    // modifiers
+    b8 is_internal = match(p, TOKEN_INTERNAL);
+    b8 is_inline   = match(p, TOKEN_INLINE);
+    b8 is_export   = match(p, TOKEN_EXPORT);
+
+    if(at(p, TOKEN_FN))
+        return parse_fn_decl(p, is_internal, is_inline, is_export);
+
+    if(at(p, TOKEN_TYPE))
+        return parse_type_alias(p, is_internal);
+
+    // var decl
+    if(is_type_start(p))
+        return parse_var_decl(p, false);
+    
+    fprintf(stderr, "[line %d] error: unexpected token '%.*s' at top level \n",
+        line, cur(p)->text.len, cur(p)->text.data
+    );
+    p->errors++;
+    advance(p);
+    return nullptr;
+}
+
+// api
+
+null Parser_Init(Parser* p, const Token_Array* tokens, Ast_Arena* arena, Parse_Mode mode) {
+    p->tokens = tokens->tokens;
+    p->count = tokens->count;
+    p->pos = 0;
+    p->mode = mode;
+    p->arena = arena;
+    p->errors = 0;
+}
+
+Ast_Node* Parser_Run(Parser* p) {
+    i32 line =1;
+
+    Ast_Node* program = Ast_Arena_Node(p->arena, NODE_PROGRAM, line);
+    Ast_Node* decls_buf[1024];
+    i32 decl_count = 0;
+
+    // module declaration check
+    if(at(p, TOKEN_MODULE)) {
+        advance(p);
+        const Token* name = expect(p, TOKEN_IDENT, "module name");
+        expect(p, TOKEN_SEMICOLON, "';'");
+        Ast_Node* mod = Ast_Arena_Node(p->arena, NODE_MODULE, 1);
+        mod->node_module.name = name->text;
+        decls_buf[decl_count++] = mod;
+    }
+
+    // import declaration
+    while(at(p, TOKEN_IMPORT)) {
+        advance(p);
+        const Token* name = expect(p, TOKEN_IDENT, "module name");
+        expect(p, TOKEN_SEMICOLON, "';'");
+        Ast_Node* imp = Ast_Arena_Node(p->arena, NODE_IMPORT, cur(p)->line);
+        imp->node_import.name = name->text;
+        decls_buf[decl_count++] = imp;
+    }
+
+    // top level decl
+    while(!at(p, TOKEN_EOF)) {
+        Ast_Node* decl = parse_top_decl(p);
+        if(decl) decls_buf[decl_count++] = decl;
+    }
+
+    // copy into arena
+    if(decl_count > 0) {
+        program->node_program.decls = (Ast_Node**)Ast_Arena_Array(
+            p->arena, (i64)sizeof(Ast_Node*), decl_count
+        );
+        for(i32 i = 0; i <decl_count; i++) {
+            program->node_program.decls[i] = decls_buf[i];
+        }
+    }
+
+    program->node_program.count = decl_count;
+
+    if(p->errors > 0) {
+        fprintf(stderr, "%d parse error(s)\n", p->errors);
+        return nullptr;
+    }
+
+    return program;
+}
 
 
