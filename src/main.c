@@ -16,10 +16,11 @@
 #include <parser/parser.h>
 #include <ast/ast.h>
 #include <codegen/codegen.h>
+#include <typechecker/typechecker.h>
 
 // read entier file
 
-#define AST_ARENA_SIZE (1024 * 256) 
+#define AST_ARENA_SIZE (1024 * 256)  // 256kb
 
 static i8* read_file(const i8* path) {
     FILE* f = fopen(path, "rb");
@@ -202,6 +203,18 @@ i32 main(i32 argc, i8** argv) {
         return 1;
     }
 
+    // type checker
+    TypeChecker tc;
+    TypeChecker_Init(&tc, &st, &arena);
+    TypeChecker_Check(&tc, program);
+
+    if(tc.errors > 0) {
+        fprintf(stderr, "%d type error(s)"endl, tc.errors);
+        Ast_Arena_Free(&arena);
+        TokenArray_Free(&tokens);
+        free(source);
+        return 1;
+    }
 
     // codegen
     i8 ll_path[512];
@@ -232,5 +245,5 @@ i32 main(i32 argc, i8** argv) {
     Ast_Arena_Free(&arena);
     TokenArray_Free(&tokens);
     free(source);
-    return (parser.errors + st.errors + cg.errors) ? 1 : 0;
+    return (parser.errors + st.errors + tc.errors + cg.errors) ? 1 : 0;
 }

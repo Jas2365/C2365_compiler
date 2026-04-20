@@ -9,7 +9,8 @@ iflags  = -Iinc \
 		  -Iinc/parser \
 		  -Iinc/codegen \
 		  -Iinc/symtable \
-		  -Iinc/StringView
+		  -Iinc/StringView \
+		  -Iinc/typechecker
 
 
 cflags  = $(std) $(warns) $(opt) $(iflags)

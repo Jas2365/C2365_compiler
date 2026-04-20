@@ -26,7 +26,7 @@
  // emit LLVM type string for an asttype
 
  static null emit_type(Codegen* cg, const Ast_Type* t) {
-    if(!t) { pfrintf(OUT, "void"); return; }
+    if(!t) { fprintf(OUT, "void"); return; }
     switch(t->kind) {
         case TYPE_NULL: fprintf(OUT, "void");   break;
         case TYPE_BOOL: fprintf(OUT, "i1");     break;
@@ -71,8 +71,8 @@ static b8 is_float_type(const Ast_Type* t) {
 
 // forward decl
 static i32 emit_expr (Codegen* cg, const Ast_Node* node);
-static i32 emit_stmt (Codegen* cg, const Ast_Node* node);
-static i32 emit_block(Codegen* cg, const Ast_Node* block);
+static null emit_stmt (Codegen* cg, const Ast_Node* node);
+static null emit_block(Codegen* cg, const Ast_Node* block);
 
 // Local variable map
 
@@ -242,7 +242,7 @@ static i32 emit_expr(Codegen* cg, const Ast_Node* node) {
             
             i32 r = next_reg(cg);
             // stage 2 type checker here to provide real types
-            fprintf(OUT, "  %%r%d = call %i32 @%.*s(",
+            fprintf(OUT, "  %%r%d = call i32 @%.*s(",
                 r,
                 node->node_call.callee->node_ident.name.len,
                 node->node_call.callee->node_ident.name.data);
@@ -315,6 +315,240 @@ static null emit_stmt(Codegen* cg, const Ast_Node* node) {
         }
 
         // if / else
+        case NODE_IF: {
+            i32 cond_r = emit_expr(cg, node->node_if.cond);
+            i32 then_l = next_label(cg);
+            i32 else_l = next_label(cg);
+            i32 merge_l = next_label(cg);
 
+            fprintf(OUT, "  br i1 %%r%d, label %%L%d, label %%L%d\n",
+            cond_r, then_l, else_l);
+
+            fprintf(OUT, "L%d:\n", then_l);
+            emit_block(cg, node->node_if.then_block);
+            fprintf(OUT, "  br label %%L%d\n", merge_l);
+
+            fprintf(OUT, "L%d:\n", else_l);
+            if(node->node_if.else_block)
+                emit_block(cg, node->node_if.else_block);
+            fprintf(OUT, "  br label %%L%d\n", merge_l);
+
+            fprintf(OUT, "L%d:\n", merge_l);
+            break;
+        }
+
+        // while
+        case NODE_WHILE: {
+            
+            i32 cond_l = next_label(cg);
+            i32 body_l = next_label(cg);
+            i32 exit_l = next_label(cg);
+
+            fprintf(OUT, "  br label %%L%d\n", cond_l);
+            fprintf(OUT, "L%d:\n", cond_l);
+            i32 cond_r = emit_expr(cg, node->node_while.cond);
+            fprintf(OUT, "  br i1 %%r%d, label %%L%d, label %%L%d\n",
+                cond_r, body_l, exit_l);
+            fprintf(OUT, "L%d:\n", body_l);
+            emit_block(cg, node->node_while.body);
+            fprintf(OUT, "  br label %%L%d\n", cond_l);
+
+            fprintf(OUT, "L%d:\n", exit_l);
+            break;
+        }
+
+        // for
+        case NODE_FOR: {
+            if(node->node_for.init) emit_stmt(cg, node->node_for.init);
+
+            i32 cond_l = next_label(cg);
+            i32 body_l = next_label(cg);
+            i32 exit_l = next_label(cg);
+        
+            fprintf(OUT, "  br label %%L%d\n", cond_l);
+            fprintf(OUT, "L%d:\n", cond_l);
+
+            if(node->node_for.cond) {
+                i32 cond_r = emit_expr(cg, node->node_for.cond);
+                fprintf(OUT, "  br i1 %%r%d, label %%L%d, label %%L%d\n",
+                    cond_r, body_l, exit_l);
+            } else {
+                fprintf(OUT, "  br label %%L%d\n", body_l);
+            }
+
+            fprintf(OUT, "L%d:\n", body_l);
+            emit_block(cg, node->node_for.body);
+            if(node->node_for.step) emit_stmt(cg, node->node_for.step);
+            fprintf(OUT, "  br label %%L%d\n", cond_l);
+
+            fprintf(OUT, "L%d:\n", exit_l);
+            break;
+        }
+
+        // break -continue stage6 needs loop label stack
+        case NODE_BREAK:
+        case NODE_CONTINUE:
+            fprintf(stderr, "break/continue: requires loop label stack (stage6)\n");
+            break;
+        
+        // expr stmt
+        case NODE_EXPR_STMT:
+            emit_expr(cg, node->node_expr_stmt.expr);
+            break;
+        
+        // block
+        case NODE_BLOCK:
+            emit_block(cg, node);
+            break;
+        
+        // persist - static local stage 6
+        case NODE_PERSIST_DECL:
+            fprintf(stderr, "persist: stage6\n");
+            break;
+        
+        default:
+            fprintf(stderr, "codegen: unhandled stmt node %s\n", 
+                Node_Kind_Name(node->kind));
+            break;
+    }
+}
+
+static null emit_block(Codegen* cg, const Ast_Node* block) {
+    if(!block || block->kind != NODE_BLOCK) return;
+    for(i32 i = 0; i< block->node_block.count; i++) 
+        emit_stmt(cg, block->node_block.stmts[i]);
+}
+
+// function emitter
+
+static null emit_fn(Codegen* cg, const Ast_Node* fn) {
+    if(fn->kind != NODE_FN_DECL) return;
+
+    cg->reg = 0;
+    cg->label = 0;
+    locals_reset();
+
+    // for .cm decl
+    if(!fn->node_fn_decl.body) {
+        fprintf(OUT, "declare ");
+        emit_type(cg, fn->node_fn_decl.ret_type);
+        fprintf(OUT, " @%.*s(",
+            fn->node_fn_decl.name.len,fn->node_fn_decl.name.data 
+        );
+        for(i32 i = 0; i< fn->node_fn_decl.param_count; i++) {
+            if(i) fprintf(OUT, ", ");
+            const Ast_Param* p = &fn->node_fn_decl.params[i];
+            if(p->is_mutable) 
+                fprintf(OUT, "ptr"); // ! param -> pointer in IR
+            else 
+                emit_type(cg, p->type_node);
+        }
+        fprintf(OUT, ")\n\n");
+        return;
+    }
+
+    // def
+    const i8* linkage = fn->node_fn_decl.is_internal ? "internal" : "";
+    fprintf(OUT, "define %s", linkage);
+    emit_type(cg, fn->node_fn_decl.ret_type);
+    fprintf(OUT, " @%.*s(", fn->node_fn_decl.name.len, fn->node_fn_decl.name.data);
+
+    for(i32 i = 0; i< fn->node_fn_decl.param_count; i++) {
+        if(i) fprintf(OUT, ", ");
+        const Ast_Param* p = &fn->node_fn_decl.params[i];
+        if(p->is_mutable)
+            fprintf(OUT, "ptr %%p%d", i); // ! param - pointer
+        else 
+            fprintf(OUT, "i32 %%p%d", i); // const param - value, stage 2 real type
+    }
+
+    fprintf(OUT, ") {\nentry:\n");
+
+    // alloca each param into local slot 
+
+
+    for(i32 i = 0; i< fn->node_fn_decl.param_count; i++) {
+        const Ast_Param* p = &fn->node_fn_decl.params[i];
+        b8 is_float = is_float_type(p->type_node);
+
+        if(p->is_mutable) {
+            // mutable param - already pointer, registr it directly
+            // alloca_reg points tothe incoming ptr argument
+            i32 slot = next_reg(cg);
+            fprintf(OUT, "  %%r%d = alloca ptr\n", slot);
+            fprintf(OUT, "  store ptr %%p%d, ptr %%r%d\n", i, slot);
+            locals_add(p->name, slot, false);
+        } else {
+            // const param - alloca a slot and store the value
+            i32 slot = next_reg(cg);
+            if(is_float) {
+                fprintf(OUT, "  %%r%d = alloca double\n", slot);
+                fprintf(OUT, "  store double, %%p%d, ptr %%r%d\n", i, slot);
+            } else {
+                fprintf(OUT, "  %%r%d = alloca i32\n", slot);
+                fprintf(OUT, "  store i32 %%p%d, ptr %%r%d\n", i, slot);
+            }
+            locals_add(p->name, slot, is_float);
+        }
+    }
+
+    // emit body
+    emit_block(cg, fn->node_fn_decl.body);
+
+    // if last null, emit ret void
+    if(fn->node_fn_decl.ret_type && fn->node_fn_decl.ret_type->kind == TYPE_NULL)
+        fprintf(OUT, "  ret void\n");
+
+    fprintf(OUT, "}\n\n");
+}
+
+// top level emitter
+
+null Codegen_Init(Codegen* cg, FILE* out, SymTable* st) {
+    cg->out = out;
+    cg->st = st;
+    cg->reg = 0;
+    cg->label = 0;
+    cg->errors = 0;
+}
+
+null Codegen_Emit(Codegen* cg, const Ast_Node* program) {
+    
+    // ir file header
+    fprintf(OUT, "; LLVM IR generated by compiler\n");
+    fprintf(OUT, "target triple = \"x86_64-w64-windows-gnu\"\n\n");
+
+    if(!program || program->kind != NODE_PROGRAM) return;
+
+    for(i32 i = 0; i < program->node_program.count; i++) {
+        const Ast_Node* decl = program->node_program.decls[i];
+        if(!decl) continue;
+
+        switch (decl->kind) {
+            case NODE_FN_DECL:
+                emit_fn(cg, decl);
+                break;
+            case NODE_MODULE:
+            case NODE_IMPORT:
+                fprintf(OUT, "; %s %.*s\n",
+                decl->kind == NODE_MODULE ? "module" : "import", 
+                decl->kind == NODE_MODULE ? decl->node_module.name.len : decl->node_import.name.len,
+                decl->kind == NODE_MODULE ? decl->node_module.name.data : decl->node_import.name.data );
+                break;
+
+            case NODE_VAR_DECL:
+                fprintf(stderr, "global var decl: stage 2\n");
+                break;
+
+            case NODE_TYPE_ALIAS:
+                // struct type regis - stage 2
+                // for nw emit comment
+                fprintf(OUT, "; type %.*s\n",
+                    decl->node_type_alias.name.len, decl->node_type_alias.name.data);
+                break;
+            
+            default:
+                break;
+        }
     }
 }

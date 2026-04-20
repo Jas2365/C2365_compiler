@@ -254,6 +254,7 @@ typedef enum Unary_Op {
 struct Ast_Node {
     Node_Kind kind;
     i32       line;
+    Ast_Type* resolved_type;
 
     union {
 
