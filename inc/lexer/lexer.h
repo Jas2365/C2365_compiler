@@ -10,6 +10,11 @@
  * OR CONDITIONS OF ANY KIND, either express or implied.
  */
 
+ /**
+  * lexer.h
+  * Token types and lexer intrface.
+  */
+
 #pragma once 
 
 #include <ints.h>
@@ -142,6 +147,11 @@ typedef struct Lexer {
     i32       line;
     i32       col;
 
+    // string buffer for processed string literals (escape sequences resolved)
+    i8*       string_buf; // dynamically allocated buffer
+    i32       string_len; // current used length
+    i32       string_cap; // total capacity
+
 } Lexer;
 
 // _Token_Array_
@@ -151,7 +161,7 @@ typedef struct Token_Array {
     Token*  tokens;
     i32     count;
     i32     capacity;
-
+    i8*     string_buf;
 } Token_Array;
 
 // _API_

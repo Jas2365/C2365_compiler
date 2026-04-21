@@ -42,8 +42,8 @@
         case TYPE_F64:  fprintf(OUT, "double");     break;
         // case TYPE_CHAR:  fprintf(OUT, "i8");     break;  I8 = CHAR
         case TYPE_STRING: 
-            // string = {i8*, i32 } fat pointer - stage4
-            fprintf(OUT, "{ ptr, i32 }");
+            // string handle from String.h = {i32 index, i32 generation, u32 checksum }
+            fprintf(OUT, "{ i32, i32, i32 }");
             break;
         case TYPE_POINTER:
             fprintf(OUT, "ptr");

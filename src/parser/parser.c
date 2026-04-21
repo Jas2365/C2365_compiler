@@ -25,9 +25,9 @@
 
 #include <parser/parser.h>
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include <stdio.h>  // fprintf
+#include <stdlib.h> // strtoll, strod
+#include <string.h> // memcpy
 
 
 // _Internal_Helpers_
@@ -45,7 +45,6 @@ static inline const Token *peek_at(const Parser* p, i32 offset) {
 static inline b8 at(const Parser* p, Token_Type kind) {
     return cur(p)->kind == kind;
 }
-
 
 static inline b8 at2(const Parser* p, Token_Type a, Token_Type b) {
     return cur(p)->kind == a && peek_at(p, 1)-> kind == b;
@@ -92,13 +91,13 @@ static b8 is_type_start(const Parser* p) {
 }
 
 // forawrd decl
-static Ast_Node* parse_stmt (Parser* p);
-static Ast_Node* parse_expr (Parser* p);
-static Ast_Node* parse_block (Parser* p);
-static Ast_Type* parse_type (Parser* p);
-static Ast_Node* parse_fn_decl (Parser* p, b8 is_internal, b8 is_inline, b8 is_export);
-static Ast_Node* parse_type_alias (Parser* p, b8 is_internal);
-static Ast_Node* parse_var_decl (Parser* p, b8 is_const);
+static Ast_Node* parse_stmt         (Parser* p);
+static Ast_Node* parse_expr         (Parser* p);
+static Ast_Node* parse_block        (Parser* p);
+static Ast_Type* parse_type         (Parser* p);
+static Ast_Node* parse_fn_decl      (Parser* p, b8 is_internal, b8 is_inline, b8 is_export);
+static Ast_Node* parse_type_alias   (Parser* p, b8 is_internal);
+static Ast_Node* parse_var_decl     (Parser* p, b8 is_const);
 static Ast_Node* parse_persist_decl (Parser* p);
 
 // type parsing
@@ -665,8 +664,8 @@ static Ast_Node* parse_primary(Parser* p) {
     if(at(p, TOKEN_STRING_LIT)) {
         const Token* t = advance(p);
         Ast_Node* n = Ast_Arena_Node(p->arena, NODE_LIT_STRING, line);
-        // strip surround quotes from the view
-        n->node_lit_string.text = sv_from_token(t->text.data + 1, t->text.len -2 );
+        // token text already points to processed string (no quotes, escapes resolved)
+        n->node_lit_string.text = t->text;
         return n;
     }
 

@@ -40,10 +40,11 @@
 
 // _Codegen_State_
 typedef struct Codegen {
-    FILE* out;
-    SymTable* st;
-    i32 reg;
-    i32 label;
+    FILE* out;          // out.ll file
+    SymTable* st;   
+    i32 reg;        // SSA reg countr -reset per fun
+    i32 label;      // label counter fro branches
+    i32 str_count; // global string lit counter
     i32 errors;
 } Codegen;
 

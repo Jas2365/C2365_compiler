@@ -10,6 +10,11 @@
  * OR CONDITIONS OF ANY KIND, either express or implied.
  */
 
+ /**
+  * lexer.c
+  * Lexer implementation - conversts source text into a flat token array
+  */
+
 #include <lexer/lexer.h>
 
 #include <stdio.h>  // printf
@@ -20,8 +25,8 @@
 // _Keyword_Table_
 
 typedef struct Keyword {
-    const i8* word;
-    i32 length;
+    const i8*  word;
+    i32        length;
     Token_Type kind;
 } Keyword;
 
@@ -146,6 +151,36 @@ static Token Error_Token(const Lexer* l, i8* msg) {
     };
 }
 
+// _String_Processing_Helpers_
+// ensure string buffer has space fo n more bytes
+static null ensure_string_space(Lexer* l, i32 needed) {
+    if(l->string_len + needed >= l->string_cap) {
+        i32 new_cap = (l->string_cap * 2) > (l->string_len + needed + 256) 
+                    ? (l->string_cap * 2)
+                    : (l->string_len + needed + 256);
+        l->string_buf = realloc(l->string_buf, (size_t)new_cap);
+        l->string_cap = new_cap;
+    }
+}
+
+// process a single escape sequence, return the character to emit
+// advances the lexer past the escape sequence
+static i8 process_escape(Lexer* l) {
+    if(is_at_end(l)) return '\0'; //
+    i8 c = advance(l);
+    switch (c) {
+        case 'n' :   return '\n';
+        case 'r' :   return '\r';
+        case 't' :   return '\t';
+        case '\\':   return '\\';
+        case '"' :   return '\"';
+        case '\'':   return '\'';
+        case '0' :   return '\0';
+        // todo: stage 4: /xHH hex escapes, \uXXXX unicode
+        default: return c;
+    }
+}
+
 // _Whitespaces_And_Comments_
 
 // def need enums and better code formatting and smaler functions
@@ -238,19 +273,42 @@ static Token scan_token(Lexer* l) {
         if(is_at_end(l)) return Error_Token(l, "unterminated char literal");
         advance(l);     // the char
         if(peek(l) != '\'') return Error_Token(l, "char literal too long");
-        advance(l);
+        advance(l);     // the closing '
         return Make_Token(l, TOKEN_CHAR_LIT);
     }
 
     // _String_literal_
     if( c == '"' ) {
+        // save start position in string sequeces
+        i32 str_start = l->string_len;
+
+        // process string contents, handling escape sequences
         while(peek(l) != '"' && !is_at_end(l)) {
             if(peek(l) == '\n') { l->line++; l->col = 0; } // should make this into a functon
-            advance(l);
+            
+            if(peek(l) == '\\') {
+                advance(l); // skip the backslash
+
+                i8 escaped = process_escape(l);
+                ensure_string_space(l, 1);
+                l->string_buf[l->string_len++] = escaped;
+            } else {
+                ensure_string_space(l, 1);
+                l->string_buf[l->string_len++] = advance(l);
+            }
         }
         if(is_at_end(l)) return Error_Token(l, "unterminated string");
         advance(l); // closing "
-        return Make_Token(l, TOKEN_STRING_LIT);
+
+        Token tok = {
+            .kind = TOKEN_STRING_LIT,
+            .text = sv_from_token(l->string_buf + str_start,
+                                  l->string_len - str_start),
+            .line = l->line,
+            .col  = l->col - (i32)(l->current - l->start),
+        };
+
+        return tok;
     }
 
     // _Symbols_
@@ -299,14 +357,19 @@ null Lexer_Init(Lexer* lexer, const i8* source) {
     lexer->current  = source;
     lexer->line     = 1;
     lexer->col      = 1;
-}
 
+    // init string buf for processed string literals
+    lexer->string_cap = 1024; // start with 1kb
+    lexer->string_len = 0;
+    lexer->string_buf = malloc((size_t)lexer->string_cap);
+}
 
 Token_Array Lexer_Tokenize(Lexer* lexer) {
     Token_Array arr = {
         .tokens     = malloc(sizeof(Token) * TOKEN_ARRAY_INITIAL_CAP),
         .count      = 0,
         .capacity   = TOKEN_ARRAY_INITIAL_CAP,
+        .string_buf = nullptr, // will transfer from lexer
     };
     
     for(;;) {
@@ -315,12 +378,18 @@ Token_Array Lexer_Tokenize(Lexer* lexer) {
         if(t.kind == TOKEN_EOF || t.kind == TOKEN_ERROR) break;
     }
 
+    // transfer string buffer ownership to token array
+    arr.string_buf = lexer->string_buf;
+    lexer->string_buf = nullptr;
+
     return arr;
 }
 
 null TokenArray_Free(Token_Array* arr) {
     free(arr->tokens);
+    free(arr->string_buf);
     arr->tokens     = nullptr;
+    arr->string_buf = nullptr;
     arr->count      = 0;
     arr->capacity   = 0;
 }
@@ -329,7 +398,7 @@ null TokenArray_Free(Token_Array* arr) {
 
 const i8* Token_TypeName(Token_Type kind) {
     switch (kind) {
-         case TOKEN_INT_LIT:    return "INT_LIT";
+        case TOKEN_INT_LIT:    return "INT_LIT";
         case TOKEN_FLOAT_LIT:  return "FLOAT_LIT";
         case TOKEN_STRING_LIT: return "STRING_LIT";
         case TOKEN_CHAR_LIT:   return "CHAR_LIT";
